@@ -2,7 +2,13 @@
 
 Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers the stock-launcher gesture-routing bug that can take over a selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge.
 
-**0.1.0-test — phone validation required.** The recovery action was verified on an affected phone; automatic detection, installation and scheduling still require device testing. Detection is based on REDMAGICOS11.0.18MR1_GB and launcher 16.0.020.000.2603171131. Different dump formats fail closed.
+**0.1.1-test — phone validation required.** The recovery action was verified on an affected phone; automatic detection, installation and scheduling still require device testing. Detection is based on REDMAGICOS11.0.18MR1_GB and launcher 16.0.020.000.2603171131. Different dump formats fail closed.
+
+## 0.1.1 test update
+
+Fix Android pretty-printed `roles.xml` parsing: whitespace between XML tags previously allowed the last role name to be mistaken for the Home holder. This prevented baseline learning and recovery on the affected device. Add regression coverage for spaced/newline/CRLF XML, trailing empty roles, duplicate HOME roles and malformed input. Add baseline-learned events and state transitions visible through Action; routine checks do not rewrite unchanged status. The first version's automated tests did not cover Android's spaced multiline layout.
+
+After updating, reboot and use your selected launcher normally. Action should show the actual selected package and eventually `monitoring: healthy baseline learned`. An already-stale session without a healthy baseline remains blocked; this test release does not pretend that a stale dump provides a trusted baseline.
 
 ## When it acts
 
@@ -27,7 +33,7 @@ Polling uses a 30-second interval, with two extra five-second confirmation inter
 2. Install the module ZIP through Magisk or KernelSU Manager and reboot once.
 3. Keep your preferred third-party launcher selected in Android's default-app settings. Use Home normally so the guard can observe healthy routing.
 4. Normal use must not restart either launcher. If the stock launcher later takes over, wait up to about a minute while its Home screen remains visible.
-5. Use the module's **Action** button to view routing and recent events. Action is read-only and never forces recovery.
+5. Use the module's **Action** button to view routing and recent events. Action shows whether the monitor is running, its baseline/blocked state, attempt count, last result, current routing and recent events. It is read-only and never forces recovery.
 
 Script-only module: no mount/metamodule dependency and no SELinux policy changes. Unknown shell output or unsupported firmware means no automatic action.
 

@@ -42,6 +42,29 @@ class Parsers(unittest.TestCase):
         for xml in ['', '<roles/>', '<role name="android.app.role.HOME"><holder name="a"/><holder name="b"/></role>']:
             self.assertEqual(parse('role_holder', xml).stdout.strip(), '')
 
+    def test_android_pretty_printed_roles_with_trailing_empty_roles(self):
+        xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<roles version="1" packagesHash="synthetic">
+  <role name="android.app.role.BROWSER" fallbackEnabled="true">
+    <holder name="org.example.browser" />
+  </role>
+  <role name="android.app.role.HOME" fallbackEnabled="true">
+    <holder name="org.example.launcher" />
+  </role>
+  <role name="android.app.role.RESERVED_FOR_TESTING_PROFILE_GROUP_EXCLUSIVITY" fallbackEnabled="true" activeUserId="0" />
+  <role name="android.app.role.SYSTEM_VENDOR_INTELLIGENCE" fallbackEnabled="true" />
+</roles>"""
+        for text in [xml, xml.replace('\n', '\r\n'), xml.replace('\n', '   ')]:
+            self.assertEqual(parse('role_holder', text).stdout.strip(), 'org.example.launcher')
+
+    def test_missing_empty_duplicate_or_unclosed_home_is_unknown(self):
+        for xml in [
+            '<roles><role name="android.app.role.HOME" /></roles>',
+            '<roles><role name="android.app.role.HOME"><holder name="org.example"/></role><role name="android.app.role.HOME"><holder name="org.other"/></role></roles>',
+            '<roles><role name="android.app.role.HOME"><holder name="org.example"/></roles>',
+        ]:
+            self.assertEqual(parse('role_holder', xml).stdout.strip(), '')
+
     def test_focus_recents_is_not_home(self):
         self.assertEqual(parse('stock_home_foreground', 'topResumedActivity=ActivityRecord{123 u0 ' + STOCK + ' t2}').returncode, 0)
         for component in [RECENTS, 'com.example/.Home', '']:
@@ -95,6 +118,7 @@ dumpsys() { echo 'topResumedActivity=ActivityRecord{123 u0 com.zte.mifavor.launc
     def test_only_persistent_stale_recovers(self):
         events = self.run_scenario('stale')
         self.assertEqual(events.count('am force-stop'), 1)
+        self.assertIn('healthy baseline learned: org.example.launcher/.Home; recovery armed', events)
         self.assertIn('am start --user 0 -n org.example.launcher/.Home', events)
         self.assertLess(events.index('capture'), events.index('am force-stop'))
 

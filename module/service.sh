@@ -18,6 +18,10 @@ BASE_HOLDER=
 BASE_COMPONENT=
 last_attempt=0
 attempts=0
+LAST_RESULT=none
+printf '%s\n' "$$" > "$STATE/monitor.pid"
+cat /proc/sys/kernel/random/boot_id > "$STATE/monitor.boot"
+write_status "waiting for healthy baseline"
 log_event "monitor started; waiting for healthy default-launcher routing"
 while active_module; do
     sleep 30
@@ -26,6 +30,7 @@ while active_module; do
         armed=0
         BASE_HOLDER=
         BASE_COMPONENT=
+        write_status "no eligible third-party Home role"
         continue
     fi
     if [ "$holder" != "$BASE_HOLDER" ]; then
@@ -33,24 +38,49 @@ while active_module; do
         BASE_HOLDER=$holder
         BASE_COMPONENT=
     fi
-    eligible || continue
+    if ! eligible; then
+        write_status "paused: screen, keyguard, user or default check"
+        continue
+    fi
     routing_dump=$(read_routing)
     route=$(printf '%s\n' "$routing_dump" | routing_state)
     if [ "$route" = healthy ]; then
         component=$(printf '%s\n' "$routing_dump" | home_component)
         if [ "${component%%/*}" = "$BASE_HOLDER" ]; then
+            if [ "$armed" != 1 ] || [ "$BASE_COMPONENT" != "$component" ]; then
+                log_event "healthy baseline learned: $component; recovery armed"
+            fi
             BASE_COMPONENT=$component
             armed=1
+            write_status "monitoring: healthy baseline learned"
         else
             armed=0
+            write_status "blocked: routing does not match saved default"
         fi
         continue
     fi
-    [ "$armed" = 1 ] && [ "$route" = stale ] || continue
-    foreground_ok || continue
+    if [ "$route" != stale ]; then
+        write_status "blocked: unknown routing output"
+        continue
+    fi
+    if [ "$armed" != 1 ]; then
+        write_status "stale routing: waiting for healthy baseline"
+        continue
+    fi
+    if ! foreground_ok; then
+        write_status "stale routing: waiting for stock Home foreground"
+        continue
+    fi
     now=$(uptime_seconds)
-    [ "$last_attempt" = 0 ] || [ "$((now-last_attempt))" -ge 600 ] || continue
-    [ "$attempts" -lt 3 ] || continue
+    if [ "$last_attempt" != 0 ] && [ "$((now-last_attempt))" -lt 600 ]; then
+        write_status "stale routing: cooldown"
+        continue
+    fi
+    if [ "$attempts" -ge 3 ]; then
+        write_status "blocked: recovery limit reached this boot"
+        continue
+    fi
+    write_status "confirming persistent stale routing"
     confirmed=1
     for sample in 2 3; do
         sleep 5
@@ -66,14 +96,17 @@ while active_module; do
     last_attempt=$(uptime_seconds)
     attempts=$((attempts+1))
     armed=0
+    write_status "recovering confirmed stale routing"
     log_event "confirmed mismatch; recovery attempt $attempts of 3 this boot"
     stop_output=$(timeout 8 /system/bin/am force-stop --user 0 "$STOCK" 2>&1)
     stop_status=$?
     if [ "$stop_status" -ne 0 ] || printf '%s' "$stop_output" | grep -qiE 'failed|error|exception'; then
+        LAST_RESULT="force-stop failed"
         log_event "force-stop failed; no further action: $stop_output"
+        write_status "recovery failed; waiting for healthy baseline"
         continue
     fi
-    # Do not bring Nova over another app if focus changed during the restart.
+    # Do not bring the default launcher over another app if focus changed during the restart.
     eligible || continue
     focus=$(dumpsys -t 4 activity activities 2>/dev/null | grep 'topResumedActivity=')
     if printf '%s' "$focus" | grep -q 'topResumedActivity=null' || printf '%s' "$focus" | stock_home_foreground; then
@@ -84,7 +117,10 @@ while active_module; do
     fi
     sleep 5
     result=$(read_routing | routing_state)
+    LAST_RESULT=$result
+    write_status "recovery attempted; verifying healthy baseline"
     log_event "post-recovery routing: $result; fresh healthy baseline required"
     [ "$result" != healthy ] || armed=1
  done
+write_status "monitor stopped"
 log_event "monitor stopped"

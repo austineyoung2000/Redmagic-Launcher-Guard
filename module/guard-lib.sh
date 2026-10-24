@@ -4,16 +4,32 @@ SERVICE=$STOCK/com.android.quickstep.TouchInteractionService
 
 # Pure parsers: unknown or ambiguous input must never authorize recovery.
 role_holder() {
-    tr '\n\r' '  ' | sed 's/></>\
-</g' | awk '
-    /<role[ >]/ { home=($0 ~ /name="android.app.role.HOME"/); count=0; holder="" }
-    home && /<holder / {
-        line=$0; sub(/^.*name="/, "", line); sub(/".*$/, "", line)
-        holder=line; count++
+    # Split at every tag boundary, not only adjacent ><. Android pretty-prints
+    # roles.xml with whitespace between tags; collapsing lines loses boundaries.
+    awk 'BEGIN { RS="<" }
+    /^role[[:space:]]/ {
+        home=($0 ~ /[[:space:]]name="android[.]app[.]role[.]HOME"/)
+        count=0; holder=""
+        if (home) homes++
+        if ($0 ~ /\/[[:space:]]*>/) home=0
+        next
     }
-    home && /<\/role>/ { if(count==1) print holder; home=0 }
+    home && /^holder[[:space:]]/ {
+        line=$0
+        if (line !~ /[[:space:]]name="[^"]+"/) { count=2; next }
+        sub(/^.*[[:space:]]name="/, "", line)
+        sub(/".*$/, "", line)
+        holder=line; count++
+        next
+    }
+    home && /^\/role[[:space:]]*>/ {
+        if (count==1) result=holder
+        home=0
+    }
+    END { if (homes==1 && result!="") print result }
     '
 }
+
 routing_state() {
     awk '
     /OverviewComponentObserver:/ { inside=1; next }
@@ -77,7 +93,7 @@ log_event() {
 capture() {
     [ ! -f "$STATE/latest.txt" ] || mv -f "$STATE/latest.txt" "$STATE/previous.txt"
     {
-        echo "Redmagic Launcher Guard 0.1.0-test"
+        echo "Redmagic Launcher Guard 0.1.1-test"
         date
         echo "Reason: $1"
         echo "Model: $(getprop ro.product.model)"
@@ -96,4 +112,14 @@ capture() {
         fi
     } 2>&1 | head -c 524288 > "$STATE/latest.txt"
     chmod 600 "$STATE/latest.txt"
+}
+
+write_status() {
+    # Persist only transitions, not every poll. Never source the resulting file.
+    status_text=$(printf 'State: %s\nDefault: %s\nBaseline: %s\nAttempts this boot: %s\nLast result: %s\n' \
+        "$1" "${BASE_HOLDER:-unknown}" "${BASE_COMPONENT:-not learned}" "${attempts:-0}" "${LAST_RESULT:-none}")
+    old_status=$(cat "$STATE/status.txt" 2>/dev/null)
+    [ "$status_text" = "$old_status" ] && return 0
+    printf '%s\n' "$status_text" > "$STATE/status.tmp"
+    mv -f "$STATE/status.tmp" "$STATE/status.txt"
 }
