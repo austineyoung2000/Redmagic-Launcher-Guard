@@ -50,7 +50,7 @@ stock_home_foreground() {
 }
 keyguard_clear() {
     awk '
-    /mKeyguardDelegate/ { inside=1 }
+    /mKeyguardDelegate|KeyguardServiceDelegate/ { inside=1 }
     inside && /^[[:space:]]*showing=/ {
       sub(/^[[:space:]]*showing=/, ""); if ($0=="false") ok=1; exit
     }
@@ -73,14 +73,45 @@ read_role() {
     done
 }
 active_module() { [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ]; }
-eligible() {
-    active_module || return 1
-    [ "$(getprop sys.boot_completed)" = 1 ] || return 1
-    [ "$(timeout 5 /system/bin/am get-current-user 2>/dev/null)" = 0 ] || return 1
-    [ -n "$BASE_HOLDER" ] && [ "$(read_role)" = "$BASE_HOLDER" ] || return 1
-    dumpsys -t 3 power 2>/dev/null | grep -q 'mWakefulness=Awake' || return 1
-    dumpsys -t 3 window policy 2>/dev/null | keyguard_clear || return 1
+user_zero_unlocked() {
+    awk '
+    /^Current user: / { current=$3; seen++ }
+    /^[[:space:]]*UserInfo[{]/ { owner=($0 ~ /UserInfo[{]0:/) }
+    owner && /^[[:space:]]*State:/ { unlocked=($2=="RUNNING_UNLOCKED"); owner=0 }
+    END { exit !(seen==1 && current=="0" && unlocked) }'
 }
+target_available() {
+    dumpsys -t 4 package "$BASE_HOLDER" 2>/dev/null | awk '
+    /^[[:space:]]*User 0:/ {
+      seen++
+      ok=($0 ~ / installed=true([[:space:]]|$)/ &&
+          $0 ~ / hidden=false([[:space:]]|$)/ &&
+          $0 ~ / suspended=false([[:space:]]|$)/ &&
+          $0 ~ / enabled=[01]([[:space:]]|$)/ &&
+          $0 !~ / quarantined=true([[:space:]]|$)/)
+    }
+    END { exit !(seen==1 && ok) }'
+}
+eligible() {
+    GATE_REASON="module disabled or removed"
+    active_module || return 1
+    GATE_REASON="boot not complete"
+    [ "$(getprop sys.boot_completed)" = 1 ] || return 1
+    GATE_REASON="startup grace period (90 seconds)"
+    [ "$(uptime_seconds)" -ge 90 ] || return 1
+    GATE_REASON="saved Home is not a third-party launcher"
+    third_party_holder "$BASE_HOLDER" || return 1
+    GATE_REASON="saved Home changed or unavailable"
+    [ -n "$BASE_HOLDER" ] && [ "$(read_role)" = "$BASE_HOLDER" ] || return 1
+    GATE_REASON="screen not awake or power state unavailable"
+    dumpsys -t 3 power 2>/dev/null | grep -q 'mWakefulness=Awake' || return 1
+    GATE_REASON="current user is not unlocked user 0, or user dump unavailable"
+    dumpsys -t 3 user 2>/dev/null | user_zero_unlocked || return 1
+    GATE_REASON="keyguard showing or policy unavailable"
+    dumpsys -t 3 window policy 2>/dev/null | keyguard_clear || return 1
+    GATE_REASON=eligible
+}
+
 read_routing() { dumpsys -t 4 activity service "$SERVICE" 2>/dev/null; }
 foreground_ok() { dumpsys -t 4 activity activities 2>/dev/null | stock_home_foreground; }
 uptime_seconds() { cut -d. -f1 /proc/uptime; }
@@ -93,7 +124,7 @@ log_event() {
 capture() {
     [ ! -f "$STATE/latest.txt" ] || mv -f "$STATE/latest.txt" "$STATE/previous.txt"
     {
-        echo "Redmagic Launcher Guard 0.1.1-test"
+        echo "Redmagic Launcher Guard 0.1.2-test"
         date
         echo "Reason: $1"
         echo "Model: $(getprop ro.product.model)"
@@ -117,7 +148,7 @@ capture() {
 write_status() {
     # Persist only transitions, not every poll. Never source the resulting file.
     status_text=$(printf 'State: %s\nDefault: %s\nBaseline: %s\nAttempts this boot: %s\nLast result: %s\n' \
-        "$1" "${BASE_HOLDER:-unknown}" "${BASE_COMPONENT:-not learned}" "${attempts:-0}" "${LAST_RESULT:-none}")
+        "$1" "${BASE_HOLDER:-unknown}" "${BASE_COMPONENT:-optional; package-scoped Home fallback}" "${attempts:-0}" "${LAST_RESULT:-none}")
     old_status=$(cat "$STATE/status.txt" 2>/dev/null)
     [ "$status_text" = "$old_status" ] && return 0
     printf '%s\n' "$status_text" > "$STATE/status.tmp"

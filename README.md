@@ -1,50 +1,58 @@
 # Redmagic Launcher Guard
 
-Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers the stock-launcher gesture-routing bug that can take over a selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge.
+Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers confirmed stale stock-launcher Home gesture routing for the selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge. No launcher package is hardcoded as the preferred Home app.
 
-**0.1.1-test — phone validation required.** The recovery action was verified on an affected phone; automatic detection, installation and scheduling still require device testing. Detection is based on REDMAGICOS11.0.18MR1_GB and launcher 16.0.020.000.2603171131. Different dump formats fail closed.
+**0.1.2-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
 
-## 0.1.1 test update
+## What changed in 0.1.2
 
-Fix Android pretty-printed `roles.xml` parsing: whitespace between XML tags previously allowed the last role name to be mistaken for the Home holder. This prevented baseline learning and recovery on the affected device. Add regression coverage for spaced/newline/CRLF XML, trailing empty roles, duplicate HOME roles and malformed input. Add baseline-learned events and state transitions visible through Action; routine checks do not rewrite unchanged status. The first version's automated tests did not cover Android's spaced multiline layout.
+The installed module's report exposed two blocked checks: `am get-current-user` failed with a Binder transaction error, and this firmware prints `KeyguardServiceDelegate` rather than `mKeyguardDelegate`. Eligibility now uses the working `dumpsys user` output to verify both current user 0 and `RUNNING_UNLOCKED`, accepts both observed keyguard labels, and reports the exact failed check.
 
-After updating, reboot and use your selected launcher normally. Action should show the actual selected package and eventually `monitoring: healthy baseline learned`. An already-stale session without a healthy baseline remains blocked; this test release does not pretend that a stale dump provides a trusted baseline.
+A prior healthy routing observation is no longer required. A stale-at-startup session can recover after a 90-second startup grace period if every mismatch and eligibility check passes. A previously observed healthy Home component is optional; otherwise the post-restart Home launch is constrained to the selected package with `MAIN` / `HOME` intent categories. Android resolves that launch, rather than guessing an activity name.
+
+Version 0.1.1 fixed Android whitespace-formatted `roles.xml` parsing and added monitor visibility. Earlier 0.1.0 and 0.1.1 test versions could remain blocked on the affected device; do not treat their lack of recoveries as evidence that the firmware issue disappeared.
 
 ## When it acts
 
-The module learns the healthy Home component of the selected launcher; it is not tied to Nova. Automatic recovery requires all of these conditions:
+Automatic recovery requires all of these conditions:
 
-- NX809J, SDK 36, completed boot, user 0, screen awake and keyguard confirmed clear.
-- Exactly one saved HOME role holder, matching the previously observed healthy third-party launcher.
-- A healthy baseline during the current monitor session: separate stock `RecentsActivity`, third-party Home target, `isDefaultHome=false`, `isHomeDisabled=false`.
-- Three consecutive stale observations over at least ten seconds: `homeAndOverviewSame=true`, stock Quickstep Home targeted for both Home and Overview, despite the saved default remaining unchanged.
-- The stock Home activity is foreground throughout confirmation and immediately before recovery. Recents alone does not qualify.
-- No attempt within the last ten minutes and fewer than three attempts this boot.
+- NX809J, SDK 36, completed boot, at least 90 seconds uptime, awake screen, current user 0 in `RUNNING_UNLOCKED`, and keyguard explicitly showing false.
+- Exactly one saved HOME role holder that is a third-party package. Selecting the stock launcher, Game Space or a setup/provisioning Home does not qualify.
+- Three consecutive stale observations over at least ten seconds: `isDefaultHome=false`, `isHomeDisabled=false`, `homeAndOverviewSame=true`, and stock Quickstep Home targeted for both Home and Overview.
+- The saved default remains the same package throughout confirmation and immediately before recovery.
+- The stock Home activity is foreground throughout confirmation and immediately before recovery. Merely opening Recents does not qualify; another app in front defers recovery.
+- The selected package is installed for user 0, visible, enabled, not suspended and not quarantined, checked before confirmation and again immediately before recovery.
+- No recovery attempt within the last ten minutes, and fewer than three attempts this boot/monitor session.
 
-Then it saves bounded diagnostics and force-stops **only** `com.zte.mifavor.launcher`. It opens the remembered default Home component only if the foreground is still stock Home or explicitly null, and the eligibility checks still pass. If another app takes focus, it leaves that app alone. A new healthy baseline is required before another attempt.
+Then it saves bounded diagnostics and force-stops **only** `com.zte.mifavor.launcher`. It opens the selected Home only if focus is still stock Home or explicitly null and eligibility still passes. If another app takes focus, it leaves that app alone. Commands use null stdin; a failed force-stop is reported as failure, consumes an attempt, and does not proceed to a launcher launch. Later attempts require a new complete confirmation and respect cooldown/limits.
 
-Normal checks never restart launchers. There is no startup restart, scheduled refresh, data/cache clearing, default-app reassignment, system APK modification, or Vector hook. Missing/ambiguous output never authorizes recovery. Selecting another default disarms the previous baseline. Booting directly into a stale state without any healthy baseline is intentionally left alone in this test version.
+Normal checks never restart launchers. There is no unconditional startup restart, scheduled launcher refresh, data/cache clearing, default-app reassignment, system APK modification or Vector hook. Unknown, missing or ambiguous state causes no action. No permission or SELinux policy changes.
 
-Polling uses a 30-second interval, with two extra five-second confirmation intervals only when suspect. Detection normally takes about 10–40 seconds after an eligible stale stock Home screen appears, plus bounded command time. It does not keep a wake lock, run logcat continuously, or write diagnostics on every poll. Android dump calls do have a small polling cost; the module does not claim to be event driven or eliminate the underlying firmware bug.
+## Monitoring overhead
+
+The loop sleeps 30 seconds between checks; only a suspect state adds two five-second confirmation intervals. Detection normally takes about 10–40 seconds after an eligible stale stock Home screen appears, plus bounded command/capture time. No wake lock, continuous logcat collection or per-poll diagnostic writes. Status is rewritten only when its state changes; Android dump calls still have a polling cost. Screen-off state stops the deeper user/keyguard/routing checks. This is a recovery workaround, not a patch to the underlying firmware.
 
 ## Install and test
 
-1. Download the ZIP produced by **Actions → Validate and package → Artifacts**, or build it locally with `python3 scripts/build.py`.
+1. Get the ZIP from **Actions → Validate and package → Artifacts**, or run `python3 scripts/build.py` locally.
 2. Install the module ZIP through Magisk or KernelSU Manager and reboot once.
-3. Keep your preferred third-party launcher selected in Android's default-app settings. Use Home normally so the guard can observe healthy routing.
-4. Normal use must not restart either launcher. If the stock launcher later takes over, wait up to about a minute while its Home screen remains visible.
-5. Use the module's **Action** button to view routing and recent events. Action shows whether the monitor is running, its baseline/blocked state, attempt count, last result, current routing and recent events. It is read-only and never forces recovery.
+3. Keep your preferred third-party launcher selected in Android settings.
+4. After unlocking and at least 90 seconds uptime, use the module's **Action** button. It prints the module version, monitor liveness, selected Home, current routing, exact live eligibility result and recorded recovery results. Action is read-only and never restarts launchers.
+5. If the bug is present, leave stock Home visible for about a minute. Read Action afterward; `confirmed mismatch; recovery attempt ...` followed by `post-recovery routing: healthy` is evidence of an automatic recovery.
 
-Script-only module: no mount/metamodule dependency and no SELinux policy changes. Unknown shell output or unsupported firmware means no automatic action.
+Healthy routing should show `monitoring: healthy baseline learned`; that observed component improves launch specificity but is optional. A stale state while another app is foreground shows `waiting for stock Home foreground`. Paused checks report their reason. Zero attempts alone is not proof that recovery works.
+
+Script-only module: no mount/metamodule dependency. Installation through Magisk and KernelSU still needs phone validation for this test version.
 
 ## Diagnostics
 
 Root-private files under `/data/adb/redmagic_launcher_guard`:
 
+- `status.txt`, `monitor.pid`, `monitor.boot`: transition state and liveness metadata.
 - `events.log`, `events.previous.log`: approximately 32 KiB per event-log generation.
 - `latest.txt`, `previous.txt`: at most 512 KiB per diagnostic capture.
 
-Logs include app/component names and recent launcher messages. Inspect before sharing. No network activity or telemetry. Disable/remove via your root manager; the monitor exits after its current bounded check/sleep. Diagnostics remain after uninstall for investigation.
+The Action display distinguishes current live eligibility from the monitor's recorded status, which can be up to one poll behind. Logs contain package/component names and recent launcher messages; inspect before sharing. No network activity or telemetry. Disable/remove via the root manager; the monitor exits after its current bounded check/sleep. Diagnostics remain after uninstall for investigation.
 
 Copy a capture with Termux:
 
@@ -54,11 +62,11 @@ su -c 'cp /data/adb/redmagic_launcher_guard/latest.txt /sdcard/Download/redmagic
 
 ## Evidence and limits
 
-On the affected device, the saved HOME holder remained the third-party launcher while `OverviewComponentObserver` targeted stock Quickstep Home for both Home and Overview. Restarting the stock launcher restored third-party Home and the separate Recents activity without clearing data. Healthy and stale parser fixtures reflect that observed difference; alternative third-party component names are tested synthetically, not yet on-device.
+The saved HOME holder remained Nova while the gesture service targeted stock Quickstep Home for both Home and Overview. Restarting the stock launcher restored Nova Home and the separate Recents activity without clearing data. Synthetic tests cover other third-party component names; those launchers have not all been tested on-device.
 
-The stock APK contains a `getHomeActivities()` wrapper that returns null after a `RemoteException`, and routing logic that can fall back to stock Home when no Home component is available. This is a plausible path, not a proven trigger. The failure predates nubia-ly. The project makes no claim about vendor intent or that any customization module caused it.
+The stock APK has a `getHomeActivities()` wrapper returning null after a `RemoteException`, and a routing path that can fall back to stock Home when no Home component is available. This is a plausible trigger, not a proven cause. The failure predates nubia-ly. No claim about vendor intent or responsibility of customization modules is made.
 
-No private uploaded reports or vendor APKs are included in this repository.
+No private uploaded reports or vendor APKs are included in this repository. Diagnostic formats and eligibility checks from the supplied reports are covered using synthetic fixtures.
 
 ## Development
 
@@ -67,4 +75,4 @@ python3 -m unittest discover -s tests -v
 python3 scripts/build.py
 ```
 
-The installer entry is the upstream Magisk `scripts/module_installer.sh`, distributed under its upstream GPL-3.0 license. See `THIRD_PARTY.md` and `LICENSE-MAGISK`.
+The installer entry is the upstream Magisk `scripts/module_installer.sh`, distributed under GPL-3.0. See `THIRD_PARTY.md` and `LICENSE-MAGISK`.

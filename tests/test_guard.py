@@ -75,6 +75,63 @@ class Parsers(unittest.TestCase):
         for dump in ['', 'showing=false', 'mKeyguardDelegate\n  showing=true\n']:
             self.assertNotEqual(parse('keyguard_clear', dump).returncode, 0)
 
+class DeviceGateParsers(unittest.TestCase):
+    def test_redmagic_keyguard_label(self):
+        self.assertEqual(parse('keyguard_clear', '    KeyguardServiceDelegate\n      showing=false\n      inputRestricted=false\n').returncode, 0)
+        for data in ['    KeyguardServiceDelegate\n      showing=true\n', 'KeyguardServiceDelegate\n  occluded=false\n']:
+            self.assertNotEqual(parse('keyguard_clear', data).returncode, 0)
+
+    def test_current_owner_and_unlock_state(self):
+        unlocked = 'Current user: 0\nUsers:\n  UserInfo{0:null:4c13} serialNo=0\n    State: RUNNING_UNLOCKED\n  UserInfo{10:Work:30} serialNo=10\n    State: RUNNING_LOCKED\n'
+        self.assertEqual(parse('user_zero_unlocked', unlocked).returncode, 0)
+        for data in [unlocked.replace('Current user: 0', 'Current user: 10'), unlocked.replace('State: RUNNING_UNLOCKED', 'State: RUNNING_LOCKED'), 'cmd: Failure calling service activity: Failed transaction (2147483646)', '', unlocked.replace('Current user: 0', '')]:
+            self.assertNotEqual(parse('user_zero_unlocked', data).returncode, 0)
+
+    def test_actual_eligibility_function_on_redmagic_dump_format(self):
+        script = r''' . "$1"
+BASE_HOLDER=org.example.launcher
+active_module() { return 0; }
+getprop() { echo 1; }
+uptime_seconds() { echo 1000; }
+read_role() { echo org.example.launcher; }
+dumpsys() {
+ case "$*" in
+  "-t 3 power") echo '  mWakefulness=Awake';;
+  "-t 3 user") printf 'Current user: 0\nUsers:\n  UserInfo{0:null:4c13} serialNo=0\n    State: RUNNING_UNLOCKED\n';;
+  "-t 3 window policy") printf '    KeyguardServiceDelegate\n      showing=false\n';;
+  *) return 1;;
+ esac
+}
+eligible
+code=$?
+echo "$GATE_REASON"
+exit "$code"
+'''
+        p = subprocess.run(['sh', '-c', script, 'test', str(LIB)], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertEqual(p.stdout.strip(), 'eligible')
+        cases = [
+            (script.replace('mWakefulness=Awake', 'mWakefulness=Asleep'), 'screen not awake'),
+            (script.replace('Current user: 0', 'Current user: 10'), 'current user is not unlocked user 0'),
+            (script.replace('RUNNING_UNLOCKED', 'RUNNING_LOCKED'), 'current user is not unlocked user 0'),
+            (script.replace('showing=false', 'showing=true'), 'keyguard showing'),
+            (script.replace('KeyguardServiceDelegate', 'UnknownPolicySection'), 'keyguard showing'),
+            (script.replace('uptime_seconds() { echo 1000;', 'uptime_seconds() { echo 30;'), 'startup grace period'),
+            (script.replace('read_role() { echo org.example.launcher;', 'read_role() { echo org.other.launcher;'), 'saved Home changed'),
+        ]
+        for body, reason in cases:
+            with self.subTest(reason=reason):
+                blocked = subprocess.run(['sh', '-c', body, 'test', str(LIB)], capture_output=True, text=True)
+                self.assertNotEqual(blocked.returncode, 0)
+                self.assertIn(reason, blocked.stdout)
+
+    def test_target_package_state(self):
+        valid = '    User 0: installed=true hidden=false suspended=false stopped=false enabled=0 quarantined=false'
+        for data, accepted in [(valid, True), (valid.replace('enabled=0', 'enabled=1'), True), (valid.replace('installed=true', 'installed=false'), False), (valid.replace('enabled=0', 'enabled=2'), False), (valid.replace('suspended=false', 'suspended=true'), False), (valid.replace('hidden=false', 'hidden=true'), False), (valid.replace('quarantined=false', 'quarantined=true'), False), ('Failed transaction', False)]:
+            script = '. "$1"; dumpsys() { printf "%s\\n" "$SAMPLE"; }; BASE_HOLDER=org.example.launcher; target_available'
+            p = subprocess.run(['sh', '-c', script, 'test', str(LIB)], env={'SAMPLE': data, 'PATH':'/usr/bin:/bin'}, capture_output=True, text=True)
+            self.assertEqual(p.returncode == 0, accepted, data + p.stderr)
+
 class Monitor(unittest.TestCase):
     def run_scenario(self, scenario):
         # Run the actual service loop with external Android I/O replaced. No real
@@ -88,10 +145,11 @@ active_module() { [ "$(cat "$MODDIR/tick" 2>/dev/null || echo 0)" -lt 12 ]; }
 sleep() { tick=$(cat "$MODDIR/tick" 2>/dev/null || echo 0); echo $((tick+1)) > "$MODDIR/tick"; }
 read_role() {
  t=$(cat "$MODDIR/tick")
- if [ "$SCENARIO" = role_change ] && [ "$t" -ge 3 ]; then echo org.other.launcher; else echo org.example.launcher; fi
+ if [ "$SCENARIO" = role_change ] && [ "$t" -ge 3 ]; then echo org.launcher.t$t; else echo org.example.launcher; fi
 }
 eligible() { [ "$SCENARIO" != locked ] && [ "$(read_role)" = "$BASE_HOLDER" ]; }
 foreground_ok() { [ "$SCENARIO" != other_app ]; }
+target_available() { [ "$SCENARIO" != missing_target ]; }
 uptime_seconds() { echo 1000; }
 read_routing() {
  t=$(cat "$MODDIR/tick")
@@ -118,12 +176,18 @@ dumpsys() { echo 'topResumedActivity=ActivityRecord{123 u0 com.zte.mifavor.launc
     def test_only_persistent_stale_recovers(self):
         events = self.run_scenario('stale')
         self.assertEqual(events.count('am force-stop'), 1)
-        self.assertIn('healthy baseline learned: org.example.launcher/.Home; recovery armed', events)
+        self.assertIn('healthy Home component observed: org.example.launcher/.Home', events)
         self.assertIn('am start --user 0 -n org.example.launcher/.Home', events)
         self.assertLess(events.index('capture'), events.index('am force-stop'))
 
+    def test_stale_from_startup_uses_selected_package_home(self):
+        events = self.run_scenario('no_baseline')
+        self.assertEqual(events.count('am force-stop'), 1)
+        self.assertIn('am start --user 0 -a android.intent.action.MAIN -c android.intent.category.HOME -p org.example.launcher', events)
+        self.assertNotIn('-n ', events)
+
     def test_no_restart_for_normal_transient_unknown_changed_or_locked_state(self):
-        for scenario in ['healthy', 'transient', 'unknown', 'role_change', 'no_baseline', 'locked', 'other_app']:
+        for scenario in ['healthy', 'transient', 'unknown', 'role_change', 'locked', 'other_app', 'missing_target']:
             with self.subTest(scenario=scenario):
                 self.assertNotIn('am force-stop', self.run_scenario(scenario))
 

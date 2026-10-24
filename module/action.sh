@@ -6,6 +6,7 @@ umask 077
 . "$MODDIR/guard-lib.sh"
 STATE=/data/adb/redmagic_launcher_guard
 mkdir -p "$STATE"
+echo "Version: $(sed -n 's/^version=//p' "$MODDIR/module.prop")"
 echo "=== Monitor ==="
 monitor_pid=$(cat "$STATE/monitor.pid" 2>/dev/null)
 monitor_boot=$(cat "$STATE/monitor.boot" 2>/dev/null)
@@ -20,7 +21,9 @@ case "$monitor_pid" in
 esac
 echo "Monitor running: $running"
 if [ "$running" = yes ]; then cat "$STATE/status.txt" 2>/dev/null; fi
-echo "Saved Home: $(read_role)"
+BASE_HOLDER=$(read_role)
+echo "Saved Home: $BASE_HOLDER"
+if eligible; then echo "Live checks: eligible"; else echo "Live checks: $GATE_REASON"; fi
 echo "Routing: $(read_routing | routing_state)"
 echo "=== Recent monitor events ==="
 tail -n 12 "$STATE/events.log" 2>/dev/null
