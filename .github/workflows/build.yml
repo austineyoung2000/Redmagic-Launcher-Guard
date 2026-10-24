@@ -1,0 +1,23 @@
+name: Validate and package
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  module:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: find module -name '*.sh' -exec sh -n {} \;
+      - name: Detection and recovery tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Package module
+        run: python3 scripts/build.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Redmagic-Launcher-Guard-test
+          path: dist/*.zip
+          if-no-files-found: error
