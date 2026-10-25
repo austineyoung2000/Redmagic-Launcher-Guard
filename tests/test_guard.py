@@ -132,6 +132,32 @@ exit "$code"
             p = subprocess.run(['sh', '-c', script, 'test', str(LIB)], env={'SAMPLE': data, 'PATH':'/usr/bin:/bin'}, capture_output=True, text=True)
             self.assertEqual(p.returncode == 0, accepted, data + p.stderr)
 
+class FullPackageDump(unittest.TestCase):
+    def test_other_user_headings_do_not_override_install_state(self):
+        data = """Packages:
+  Package [org.example.launcher] (123):
+    User 0: ceDataInode=123 deDataInode=456 installed=true hidden=false suspended=false distractionFlags=0 stopped=false notLaunched=false enabled=0 instant=false virtual=false quarantined=false
+    User 10: installed=false hidden=false suspended=false enabled=2
+Queries:
+  queryable via interaction:
+    User 0:
+      org.example.other:
+        org.example.launcher
+    User 10:
+      org.example.work:
+        org.example.launcher
+"""
+        self.assertEqual(parse('package_state', data).stdout.strip(), 'available')
+        for flags in ['installed=false', 'hidden=true', 'suspended=true', 'enabled=2', 'quarantined=true']:
+            key = flags.split('=')[0]
+            import re
+            changed = re.sub(r'(?<= )' + key + r'=[^ \n]+', flags, data, count=1)
+            self.assertEqual(parse('package_state', changed).stdout.strip(), 'unavailable')
+
+    def test_unknown_is_not_reported_as_disabled(self):
+        for data in ['', 'Failed transaction (2147483646)', '    User 0:', '    User 0: installed=true', '    User 0: installed=true hidden=false suspended=false enabled=0\n    User 0: installed=true hidden=false suspended=false enabled=0']:
+            self.assertEqual(parse('package_state', data).stdout.strip(), 'unknown')
+
 class Monitor(unittest.TestCase):
     def run_scenario(self, scenario):
         # Run the actual service loop with external Android I/O replaced. No real

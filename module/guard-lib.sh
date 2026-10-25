@@ -80,18 +80,37 @@ user_zero_unlocked() {
     owner && /^[[:space:]]*State:/ { unlocked=($2=="RUNNING_UNLOCKED"); owner=0 }
     END { exit !(seen==1 && current=="0" && unlocked) }'
 }
-target_available() {
-    dumpsys -t 4 package "$BASE_HOLDER" 2>/dev/null | awk '
-    /^[[:space:]]*User 0:/ {
+package_state() {
+    awk '
+    # Other dump sections also contain "User 0:" headings. Only an actual
+    # per-user install-state record has an installed= attribute.
+    /^[[:space:]]*User 0:/ && / installed=(true|false)([[:space:]]|$)/ {
       seen++
+      complete=($0 ~ / hidden=(true|false)([[:space:]]|$)/ &&
+                $0 ~ / suspended=(true|false)([[:space:]]|$)/ &&
+                $0 ~ / enabled=[0-9]+([[:space:]]|$)/)
       ok=($0 ~ / installed=true([[:space:]]|$)/ &&
           $0 ~ / hidden=false([[:space:]]|$)/ &&
           $0 ~ / suspended=false([[:space:]]|$)/ &&
           $0 ~ / enabled=[01]([[:space:]]|$)/ &&
           $0 !~ / quarantined=true([[:space:]]|$)/)
     }
-    END { exit !(seen==1 && ok) }'
+    END {
+      if (seen!=1 || !complete) print "unknown"
+      else if (ok) print "available"
+      else print "unavailable"
+    }'
 }
+target_available() {
+    TARGET_STATE=$(dumpsys -t 4 package "$BASE_HOLDER" 2>/dev/null | package_state)
+    case "$TARGET_STATE" in
+      available) TARGET_REASON=available; return 0 ;;
+      unavailable) TARGET_REASON="selected launcher not installed, enabled, visible or unsuspended" ;;
+      *) TARGET_REASON="package state unavailable or ambiguous" ;;
+    esac
+    return 1
+}
+
 eligible() {
     GATE_REASON="module disabled or removed"
     active_module || return 1
@@ -124,7 +143,7 @@ log_event() {
 capture() {
     [ ! -f "$STATE/latest.txt" ] || mv -f "$STATE/latest.txt" "$STATE/previous.txt"
     {
-        echo "Redmagic Launcher Guard 0.1.2-test"
+        echo "Redmagic Launcher Guard 0.1.3-test"
         date
         echo "Reason: $1"
         echo "Model: $(getprop ro.product.model)"

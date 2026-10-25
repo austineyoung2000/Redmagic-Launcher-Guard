@@ -72,7 +72,7 @@ while active_module; do
         continue
     fi
     if ! target_available; then
-        write_status "blocked: selected launcher missing, disabled or suspended"
+        write_status "blocked: $TARGET_REASON"
         continue
     fi
     write_status "confirming persistent stale routing"

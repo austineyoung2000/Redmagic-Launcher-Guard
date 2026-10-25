@@ -2,7 +2,11 @@
 
 Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers confirmed stale stock-launcher Home gesture routing for the selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge. No launcher package is hardcoded as the preferred Home app.
 
-**0.1.2-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
+**0.1.3-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
+
+## What changed in 0.1.3
+
+Fix launcher availability parsing against the complete package dump: Android also prints a `User 0:` heading under `Queries → queryable via interaction`. Earlier code counted that heading as a second package-state record and rejected an available launcher. Only `User 0:` records with an `installed=` attribute now count. Missing, incomplete or contradictory records remain blocked and are reported as unknown rather than as a disabled launcher. Action prints the selected launcher's availability result. No recovery conditions were relaxed by this parser fix.
 
 ## What changed in 0.1.2
 

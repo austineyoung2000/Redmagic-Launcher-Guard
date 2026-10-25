@@ -24,6 +24,10 @@ if [ "$running" = yes ]; then cat "$STATE/status.txt" 2>/dev/null; fi
 BASE_HOLDER=$(read_role)
 echo "Saved Home: $BASE_HOLDER"
 if eligible; then echo "Live checks: eligible"; else echo "Live checks: $GATE_REASON"; fi
+if third_party_holder "$BASE_HOLDER"; then
+    target_available
+    echo "Selected launcher availability: $TARGET_REASON"
+fi
 echo "Routing: $(read_routing | routing_state)"
 echo "=== Recent monitor events ==="
 tail -n 12 "$STATE/events.log" 2>/dev/null
