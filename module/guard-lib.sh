@@ -143,7 +143,7 @@ log_event() {
 capture() {
     [ ! -f "$STATE/latest.txt" ] || mv -f "$STATE/latest.txt" "$STATE/previous.txt"
     {
-        echo "Redmagic Launcher Guard 0.1.3-test"
+        echo "Redmagic Launcher Guard 0.1.4-test"
         date
         echo "Reason: $1"
         echo "Model: $(getprop ro.product.model)"
@@ -172,4 +172,131 @@ write_status() {
     [ "$status_text" = "$old_status" ] && return 0
     printf '%s\n' "$status_text" > "$STATE/status.tmp"
     mv -f "$STATE/status.tmp" "$STATE/status.txt"
+}
+
+# A small retained snapshot survives opening KernelSU, which changes foreground.
+# Caller must have observed stale routing with stock Home foreground.
+remember_incident() {
+    incident_now=$(uptime_seconds)
+    if [ "${last_incident:-0}" != 0 ] && [ "$((incident_now-last_incident))" -lt 600 ]; then
+        return 0
+    fi
+    last_incident=$incident_now
+    incident_tmp=$(mktemp "$STATE/incident.XXXXXX") || return 1
+    {
+        echo "=== AUTOMATIC STALE INCIDENT (before opening Action) ==="
+        date
+        echo "Boot: $(cat /proc/sys/kernel/random/boot_id)"
+        echo "Uptime: $incident_now"
+        echo "Reason: $1"
+        echo "Saved Home: $(read_role)"
+        echo "=== MONITOR STATUS AT DETECTION ==="
+        cat "$STATE/status.txt" 2>/dev/null
+        echo "=== ROUTING AT DETECTION ==="
+        printf '%s\n' "$2"
+        echo "=== FOREGROUND AT DETECTION ==="
+        dumpsys -t 4 activity activities 2>&1 |
+            grep -E 'topResumedActivity=|mResumedActivity:|ResumedActivity:'
+    } | head -c 131072 > "$incident_tmp"
+    if [ -s "$incident_tmp" ]; then
+        [ ! -f "$STATE/incident.txt" ] || cp -f "$STATE/incident.txt" "$STATE/incident.previous.txt"
+        mv -f "$incident_tmp" "$STATE/incident.txt"
+        log_event "stale incident snapshot retained"
+    else
+        rm -f "$incident_tmp"
+        return 1
+    fi
+}
+
+report_section() {
+    echo
+    echo "=== $1 ==="
+    echo "Captured: $(date '+%Y-%m-%d %H:%M:%S%z')"
+}
+retained_section() {
+    report_section "$1"
+    if [ -s "$2" ]; then head -c "$3" "$2"; else echo "No retained capture available."; fi
+    echo
+}
+write_action_report() {
+    # Keep manual evidence separate from incident/pre-recovery evidence.
+    # Bound each section independently so missing evidence remains explicit.
+    {
+        echo "REDMAGIC LAUNCHER GUARD SUPPORT REPORT"
+        echo "Version: $(sed -n 's/^version=//p' "$MODDIR/module.prop")"
+        date
+        echo "Boot: $(cat /proc/sys/kernel/random/boot_id)"
+        echo "Uptime seconds: $(uptime_seconds)"
+        echo "Model: $(getprop ro.product.model)"
+        echo "ROM: $(getprop ro.build.display.id)"
+        echo "Action collects evidence only; no launcher restart or settings change."
+        echo "IMPORTANT: the live foreground below may be KernelSU/Action."
+        echo "Use the separately timestamped automatic incident for pre-Action evidence."
+        echo "No incident capture can be reconstructed retroactively."
+        report_section "RECORDED MONITOR STATUS"
+        cat "$STATE/status.txt" 2>/dev/null
+        echo "Monitor running at Action start: ${running:-not checked}"
+        echo "Monitor PID: $(cat "$STATE/monitor.pid" 2>/dev/null)"
+        echo "Monitor boot: $(cat "$STATE/monitor.boot" 2>/dev/null)"
+        BASE_HOLDER=$(read_role)
+        echo "Saved HOME holder: $BASE_HOLDER"
+        if eligible; then echo "Live eligibility: eligible"; else echo "Live eligibility: $GATE_REASON"; fi
+        if third_party_holder "$BASE_HOLDER"; then
+            target_available
+            echo "Selected launcher availability: $TARGET_REASON"
+        fi
+        retained_section "RECENT MONITOR EVENTS" "$STATE/events.log" 40000
+        retained_section "PREVIOUS MONITOR EVENTS" "$STATE/events.previous.log" 40000
+        retained_section "LATEST AUTOMATIC STALE INCIDENT" "$STATE/incident.txt" 131072
+        retained_section "PREVIOUS AUTOMATIC STALE INCIDENT" "$STATE/incident.previous.txt" 131072
+        report_section "LIVE ROUTING (Action may now be foreground)"
+        read_routing | head -c 262144
+        report_section "LIVE FOREGROUND"
+        dumpsys -t 4 activity activities 2>&1 |
+            grep -E 'topResumedActivity=|mResumedActivity:|ResumedActivity:'
+        report_section "LIVE POWER"
+        dumpsys -t 3 power 2>&1 | grep -iE 'wakefulness|interactive|display power' | head -c 16384
+        report_section "LIVE KEYGUARD POLICY"
+        dumpsys -t 3 window policy 2>&1 | head -c 65536
+        report_section "LIVE USER STATE"
+        dumpsys -t 3 user 2>&1 | head -c 65536
+        if third_party_holder "$BASE_HOLDER"; then
+            report_section "SELECTED LAUNCHER PACKAGE"
+            dumpsys -t 4 package "$BASE_HOLDER" 2>&1 | head -c 262144
+            report_section "SELECTED LAUNCHER EXIT HISTORY"
+            dumpsys -t 3 activity exit-info "$BASE_HOLDER" 2>&1 | head -c 65536
+        fi
+        report_section "STOCK LAUNCHER EXIT HISTORY"
+        dumpsys -t 3 activity exit-info "$STOCK" 2>&1 | head -c 65536
+        report_section "RECENT STOCK LAUNCHER LOGS"
+        report_pid=$(pidof "$STOCK" | awk '{print $1}')
+        if [ -n "$report_pid" ]; then
+            timeout 5 /system/bin/logcat -b main -b system -d -v threadtime -t 300 --pid="$report_pid" 2>&1 | head -c 65536
+        else echo "Stock launcher process not found."; fi
+        retained_section "LATEST PRE-RECOVERY CAPTURE" "$STATE/latest.txt" 524288
+        retained_section "PREVIOUS PRE-RECOVERY CAPTURE" "$STATE/previous.txt" 524288
+        echo "=== END OF SUPPORT REPORT ==="
+    } > "$1" 2>&1
+}
+save_action_report() {
+    report_tmp=$(mktemp "$STATE/report.XXXXXX") || return 1
+    write_action_report "$report_tmp"
+    if ! grep -q '^=== END OF SUPPORT REPORT ===$' "$report_tmp"; then
+        echo "Report capture did not complete."
+        rm -f "$report_tmp"
+        return 1
+    fi
+    chmod 600 "$report_tmp"
+    mv -f "$report_tmp" "$STATE/manual-latest.txt" || return 1
+    # Explicit user Action exports only this one latest report; no accumulation.
+    public_tmp="$DOWNLOAD_REPORT.tmp.$$"
+    if cp "$STATE/manual-latest.txt" "$public_tmp" 2>/dev/null &&
+        mv -f "$public_tmp" "$DOWNLOAD_REPORT" 2>/dev/null; then
+        echo "REPORT SAVED: $DOWNLOAD_REPORT"
+        echo "Upload that text file to this chat."
+    else
+        rm -f "$public_tmp"
+        echo "Could not export to Download. Root-private report saved: $STATE/manual-latest.txt"
+        echo "Copy this file manually if shared storage is unavailable."
+    fi
 }

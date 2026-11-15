@@ -62,6 +62,7 @@ while active_module; do
         write_status "stale routing: waiting for stock Home foreground"
         continue
     fi
+    remember_incident "stale routing with stock Home foreground" "$routing_dump"
     now=$(uptime_seconds)
     if [ "$last_attempt" != 0 ] && [ "$((now-last_attempt))" -lt 600 ]; then
         write_status "stale routing: cooldown"

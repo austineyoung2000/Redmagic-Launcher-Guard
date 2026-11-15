@@ -2,7 +2,23 @@
 
 Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers confirmed stale stock-launcher Home gesture routing for the selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge. No launcher package is hardcoded as the preferred Home app.
 
-**0.1.3-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
+**0.1.4-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
+
+## Capture an issue from KernelSU / Magisk
+
+When a takeover does not recover, open this module and tap **Action**. Leave the Action screen open until it prints:
+
+```text
+REPORT SAVED: /sdcard/Download/redmagic-launcher-guard-report.txt
+```
+
+Upload **Download/redmagic-launcher-guard-report.txt** with the issue report. Capture normally takes several seconds, with bounded dump/log commands taking up to about a minute. No Termux command is required. Action collects evidence only; it never restarts either launcher, changes the Home default, clears data or forces recovery.
+
+The report combines current live routing/foreground, exact eligibility results, selected-package state, exit history, recent stock-launcher logs, recorded monitor status and events, plus retained pre-recovery and stale-incident snapshots. Each section is timestamped. Opening KernelSU changes foreground: live Action state is explicitly separated from pre-Action incident evidence. If no incident was observed, the report says so; it cannot reconstruct evidence retroactively.
+
+Starting with 0.1.4, when the monitor observes stale routing while stock Home is foreground and basic eligibility passes, it retains a small incident snapshot before cooldown, target-availability or attempt-limit checks. It saves at most once every ten minutes per monitor session and keeps two snapshots. It does not capture every healthy poll or keep logcat running. These incident files remain separate from manual reports and existing pre-recovery captures. Recovery confirmation conditions are unchanged.
+
+Action always keeps a root-private copy at `/data/adb/redmagic_launcher_guard/manual-latest.txt`. If shared storage is unavailable, it reports the export failure and that private path instead of claiming success. The exported Download file is replaced on the next Action; send it before collecting another report if you want to preserve that occurrence. Reports include app/component names and recent launcher messages; inspect before sharing.
 
 ## What changed in 0.1.3
 
@@ -41,7 +57,7 @@ The loop sleeps 30 seconds between checks; only a suspect state adds two five-se
 1. Get the ZIP from **Actions → Validate and package → Artifacts**, or run `python3 scripts/build.py` locally.
 2. Install the module ZIP through Magisk or KernelSU Manager and reboot once.
 3. Keep your preferred third-party launcher selected in Android settings.
-4. After unlocking and at least 90 seconds uptime, use the module's **Action** button. It prints the module version, monitor liveness, selected Home, current routing, exact live eligibility result and recorded recovery results. Action is read-only and never restarts launchers.
+4. After unlocking and at least 90 seconds uptime, use the module's **Action** button. It prints the module version, monitor liveness, selected Home, current routing, exact live eligibility result and recorded recovery results. Action saves a support report and never restarts launchers.
 5. If the bug is present, leave stock Home visible for about a minute. Read Action afterward; `confirmed mismatch; recovery attempt ...` followed by `post-recovery routing: healthy` is evidence of an automatic recovery.
 
 Healthy routing should show `monitoring: healthy baseline learned`; that observed component improves launch specificity but is optional. A stale state while another app is foreground shows `waiting for stock Home foreground`. Paused checks report their reason. Zero attempts alone is not proof that recovery works.
@@ -53,6 +69,8 @@ Script-only module: no mount/metamodule dependency. Installation through Magisk 
 Root-private files under `/data/adb/redmagic_launcher_guard`:
 
 - `status.txt`, `monitor.pid`, `monitor.boot`: transition state and liveness metadata.
+- `incident.txt`, `incident.previous.txt`: automatic stale snapshots, at most 128 KiB each.
+- `manual-latest.txt`: latest Action report, bounded sections totaling under 3 MiB; also exported to Download on demand.
 - `events.log`, `events.previous.log`: approximately 32 KiB per event-log generation.
 - `latest.txt`, `previous.txt`: at most 512 KiB per diagnostic capture.
 

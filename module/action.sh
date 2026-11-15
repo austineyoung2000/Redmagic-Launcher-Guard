@@ -31,5 +31,9 @@ fi
 echo "Routing: $(read_routing | routing_state)"
 echo "=== Recent monitor events ==="
 tail -n 12 "$STATE/events.log" 2>/dev/null
-echo "Action is read-only: it does not restart either launcher."
+echo "Action does not restart either launcher. It now saves a diagnostic report."
 echo "Automatic captures: $STATE/latest.txt and previous.txt"
+
+echo "Collecting report; this can take up to about one minute..."
+DOWNLOAD_REPORT=/sdcard/Download/redmagic-launcher-guard-report.txt
+save_action_report

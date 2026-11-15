@@ -184,6 +184,7 @@ read_routing() {
    cat "$MODDIR/healthy"
  else cat "$MODDIR/stale"; fi
 }
+remember_incident() { echo incident >> "$MODDIR/events"; }
 capture() { echo capture >> "$MODDIR/events"; }
 timeout() { shift; shift; echo "am $*" >> "$MODDIR/events"; }
 dumpsys() { echo 'topResumedActivity=ActivityRecord{123 u0 com.zte.mifavor.launcher/com.android.launcher3.uioverrides.QuickstepLauncher t2}'; }
