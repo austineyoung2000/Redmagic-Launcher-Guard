@@ -30,7 +30,7 @@ role_holder() {
     '
 }
 
-routing_state() {
+legacy_routing_state() {
     awk '
     /OverviewComponentObserver:/ { inside=1; next }
     inside && /isDefaultHome=/ { def=$0; sub(/^.*=/,"",def) }
@@ -45,7 +45,7 @@ routing_state() {
       else print "unknown"
     }'
 }
-stock_home_foreground() {
+legacy_stock_home_foreground() {
     grep -E 'topResumedActivity=.*com\.zte\.mifavor\.launcher/com\.android\.launcher3\.uioverrides\.QuickstepLauncher([[:space:]}]|$)' >/dev/null
 }
 keyguard_clear() {
@@ -63,7 +63,7 @@ home_component() {
 }
 third_party_holder() {
     case "$1" in
-        ""|android|com.zte.mifavor.launcher|cn.nubia.gamelauncher|com.android.zte.gdpr.provision|*setupwizard*|*provision*) return 1 ;;
+        ""|android|"$STOCK"|com.zte.mifavor.launcher|cn.nubia.gamelauncher|com.android.zte.gdpr.provision|*setupwizard*|*provision*) return 1 ;;
     esac
     printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$'
 }
@@ -143,7 +143,7 @@ log_event() {
 capture() {
     [ ! -f "$STATE/latest.txt" ] || mv -f "$STATE/latest.txt" "$STATE/previous.txt"
     {
-        echo "Redmagic Launcher Guard 0.1.4-test"
+        echo "Redmagic Launcher Guard 0.1.5-test"
         date
         echo "Reason: $1"
         echo "Model: $(getprop ro.product.model)"
@@ -233,6 +233,8 @@ write_action_report() {
         echo "IMPORTANT: the live foreground below may be KernelSU/Action."
         echo "Use the separately timestamped automatic incident for pre-Action evidence."
         echo "No incident capture can be reconstructed retroactively."
+        report_section "FIRMWARE AND STOCK LAUNCHER DETECTION"
+        compatibility_summary
         report_section "RECORDED MONITOR STATUS"
         cat "$STATE/status.txt" 2>/dev/null
         echo "Monitor running at Action start: ${running:-not checked}"
@@ -266,6 +268,8 @@ write_action_report() {
             report_section "SELECTED LAUNCHER EXIT HISTORY"
             dumpsys -t 3 activity exit-info "$BASE_HOLDER" 2>&1 | head -c 65536
         fi
+        report_section "STOCK LAUNCHER PACKAGE AND RESOLVERS"
+        dumpsys -t 4 package "$STOCK" 2>&1 | head -c 262144
         report_section "STOCK LAUNCHER EXIT HISTORY"
         dumpsys -t 3 activity exit-info "$STOCK" 2>&1 | head -c 65536
         report_section "RECENT STOCK LAUNCHER LOGS"
@@ -299,4 +303,130 @@ save_action_report() {
         echo "Could not export to Download. Root-private report saved: $STATE/manual-latest.txt"
         echo "Copy this file manually if shared storage is unavailable."
     fi
+}
+
+is_redmagic11pro() {
+    for identity in "$(getprop ro.product.model)" "$(getprop ro.product.device)" \
+        "$(getprop ro.product.vendor.model)" "$(getprop ro.product.vendor.device)"; do
+        case "$identity" in NX809J|NX809J-*|nx809j|nx809j-*) return 0 ;; esac
+    done
+    return 1
+}
+firmware_identity() {
+    firmware_display=$(getprop ro.build.display.id)
+    case "$(printf '%s' "$firmware_display" | tr '[:lower:]' '[:upper:]')" in
+        *REDMAGICOS*|*REDMAGIC_OS*) echo 'REDMAGICOS marker detected' ;;
+        *) echo 'firmware name unrecognized; existing recovery checks retained' ;;
+    esac
+}
+canonical_component() {
+    component=$1
+    case "$component" in
+        */.*) printf '%s/%s%s\n' "${component%%/*}" "${component%%/*}" "${component#*/}" ;;
+        */*) printf '%s\n' "$component" ;;
+    esac
+}
+# Read one unique component from the PackageManager resolver tables. Labels and
+# version numbers are not identities; package/component names are.
+resolver_component() {
+    awk -v package="$1" -v kind="$2" '
+    /Activity Resolver Table:/ { section="home"; candidate="" }
+    /Service Resolver Table:/ { section="service"; candidate="" }
+    /Receiver Resolver Table:|Provider Resolver Table:/ { section=""; candidate="" }
+    section==kind {
+      for(i=1;i<=NF;i++) {
+        if(index($i,package "/")==1) {
+          candidate=$i
+          if(candidate !~ /^[A-Za-z0-9_.$]+\/[A-Za-z0-9_.$]+$/) candidate=""
+        }
+      }
+      if(candidate!="" && ((kind=="home" && /Category:.*android.intent.category.HOME"/) ||
+                           (kind=="service" && /Action:.*android.intent.action.QUICKSTEP_SERVICE"/))) {
+        split(candidate,parts,"/")
+        if(substr(parts[2],1,1)==".") candidate=parts[1] "/" parts[1] parts[2]
+        found[candidate]=1
+      }
+    }
+    END { for(c in found) { count++; value=c }; if(count==1) print value }'
+}
+system_package() {
+    grep -E '^[[:space:]]*(pkgFlags|flags)=\[.*(^|[[:space:]])SYSTEM([[:space:]]|\])' >/dev/null
+}
+detect_stock_launcher() {
+    # Preserve the device-verified recovery path whenever discovery is incomplete.
+    STOCK=com.zte.mifavor.launcher
+    SERVICE=$STOCK/com.android.quickstep.TouchInteractionService
+    STOCK_HOME=$STOCK/com.android.launcher3.uioverrides.QuickstepLauncher
+    STOCK_RECENTS=$STOCK/com.android.quickstep.RecentsActivity
+    DETECTION_MODE=verified-fallback
+    DETECTION_REASON='using existing Redmagic launcher recovery checks'
+    recents_candidate=$(dumpsys -t 5 activity service com.android.systemui/.SystemUIService 2>/dev/null |
+        sed -n 's/^[[:space:]]*mRecentsComponentName=ComponentInfo{\([^}]*\)}.*/\1/p' | sort -u)
+    printf '%s\n' "$recents_candidate" | grep -Eq '^[A-Za-z0-9_.$]+/[A-Za-z0-9_.$]+$' || return 0
+    launcher_candidate=${recents_candidate%%/*}
+    launcher_dump=$(dumpsys -t 4 package "$launcher_candidate" 2>/dev/null)
+    printf '%s\n' "$launcher_dump" | system_package || return 0
+    home_candidate=$(printf '%s\n' "$launcher_dump" | resolver_component "$launcher_candidate" home)
+    service_candidate=$(printf '%s\n' "$launcher_dump" | resolver_component "$launcher_candidate" service)
+    recents_candidate=$(canonical_component "$recents_candidate")
+    [ -n "$home_candidate" ] && [ -n "$service_candidate" ] || return 0
+    [ "$home_candidate" != "$recents_candidate" ] || return 0
+    STOCK=$launcher_candidate
+    STOCK_HOME=$home_candidate
+    STOCK_RECENTS=$recents_candidate
+    SERVICE=$service_candidate
+    DETECTION_MODE=discovered
+    DETECTION_REASON='system Recents provider, system-package flag, HOME and Quickstep service resolved'
+}
+# The original parsers remain the fallback; discovery never removes their
+# automatic recovery when firmware reports an unfamiliar resolver format.
+routing_state() {
+    if [ "${DETECTION_MODE:-verified-fallback}" != discovered ]; then
+        legacy_routing_state
+        return
+    fi
+    awk -v home_target="$STOCK_HOME" -v recents_target="$STOCK_RECENTS" '
+    function comp(line, a) {
+      if(line !~ /cmp=/) return ""
+      sub(/^.*cmp=/,"",line); sub(/[ }].*$/,"",line)
+      split(line,a,"/"); if(substr(a[2],1,1)==".") line=a[1] "/" a[1] a[2]
+      return line
+    }
+    /OverviewComponentObserver:/ { inside=1; next }
+    inside && /isDefaultHome=/ { def=$0; sub(/^.*=/,"",def) }
+    inside && /isHomeDisabled=/ { disabled=$0; sub(/^.*=/,"",disabled) }
+    inside && /homeAndOverviewSame=/ { same=$0; sub(/^.*=/,"",same) }
+    inside && /overviewIntent=/ { overview=comp($0) }
+    inside && /homeIntent=/ { home=comp($0); inside=0 }
+    END {
+      if(def!="false" || disabled!="false") print "unknown"
+      else if(same=="true" && home==home_target && overview==home_target) print "stale"
+      else if(same=="false" && home!="" && home!=home_target && overview==recents_target) print "healthy"
+      else print "unknown"
+    }'
+}
+stock_home_foreground() {
+    if [ "${DETECTION_MODE:-verified-fallback}" != discovered ]; then
+        legacy_stock_home_foreground
+        return
+    fi
+    awk -v wanted="$STOCK_HOME" '
+    /topResumedActivity=/ {
+      for(i=1;i<=NF;i++) if($i ~ /^[A-Za-z0-9_.$]+\/[A-Za-z0-9_.$]+$/) {
+        split($i,a,"/"); component=$i
+        if(substr(a[2],1,1)==".") component=a[1] "/" a[1] a[2]
+        if(component==wanted) found=1
+      }
+    }
+    END { exit !found }'
+}
+compatibility_summary() {
+    echo "Device: $(getprop ro.product.model) / $(getprop ro.product.device)"
+    echo "Android SDK: $(getprop ro.build.version.sdk) (no exact SDK/version gate)"
+    echo "Firmware: $(firmware_identity)"
+    echo "Stock launcher: $STOCK"
+    echo "Stock Home: ${STOCK_HOME:-legacy Quickstep Home}"
+    echo "Recents: ${STOCK_RECENTS:-legacy RecentsActivity}"
+    echo "Quickstep service: $SERVICE"
+    echo "Detection: ${DETECTION_MODE:-verified-fallback}; $DETECTION_REASON"
 }

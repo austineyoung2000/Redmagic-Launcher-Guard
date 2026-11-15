@@ -1,6 +1,6 @@
 id=redmagic_launcher_guard
 name=Redmagic Launcher Guard
-version=0.1.4-test
-versionCode=5
+version=0.1.5-test
+versionCode=6
 author=EliteDarkKaiser
-description=NX809J Android 16: recover confirmed stale third-party Home gesture routing only. Independent of nubia-ly and Toolbox. No data clearing.
+description=REDMAGIC 11 Pro / NX809J: recover confirmed stale third-party Home gesture routing only. Independent of nubia-ly and Toolbox. No data clearing.

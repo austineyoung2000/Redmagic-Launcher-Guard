@@ -1,8 +1,18 @@
 # Redmagic Launcher Guard
 
-Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J on Android 16**. Automatically recovers confirmed stale stock-launcher Home gesture routing for the selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge. No launcher package is hardcoded as the preferred Home app.
+Standalone Magisk / KernelSU module for the REDMAGIC 11 Pro **NX809J**, designed for stock REDMAGICOS. Automatically recovers confirmed stale stock-launcher Home gesture routing for the selected third-party launcher. Independent of nubia-ly, Vector, Redmagic 11 Toolbox and Trigger Bridge. No launcher package is hardcoded as the preferred Home app.
 
-**0.1.4-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. Detection was derived from REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131. Unsupported dump formats cause no automatic recovery.
+**0.1.5-test — phone validation required.** The manual recovery action was verified on an affected phone; the updated automatic checks still require phone testing. The original automatic recovery was verified on REDMAGICOS11.0.18MR1_GB / launcher 16.0.020.000.2603171131; these identify the tested build, not a requirement. There is no exact Android SDK, REDMAGICOS or launcher-version restriction. Unknown failure evidence never triggers a speculative restart; the existing recognized failure still recovers automatically.
+
+## Compatibility across firmware and launcher versions
+
+Version 0.1.5 removes the SDK 36 / Android 16 installation and service gates. The device family remains NX809J (including vendor identity properties and NX809J regional suffixes). Firmware identity is reported from the installed build, without an exact REDMAGICOS-version allowlist.
+
+The guard discovers the current system Recents provider through SystemUI, verifies that it is a system package, and reads its unique HOME activity and Quickstep service from the installed package resolver tables. When all components resolve unambiguously, the routing/foreground checks use those package and component names instead of assuming one launcher version. Discovery is performed at startup, with one later retry if the first attempt was incomplete; it is not repeated on every poll.
+
+**The previously verified automatic recovery remains enabled.** Incomplete, ambiguous or unavailable discovery retains the original `com.zte.mifavor.launcher` / Quickstep checks; it does not switch the guard into diagnostics-only mode. The original known routing mismatch therefore still triggers the same confirmation and recovery. SystemUI discovery and the original fallback both have regression tests. Neither path restarts launchers for an unknown failure signature.
+
+Action remains available for other firmware/launcher versions, even if the monitor cannot recognize a new failure reason. It reports firmware/SDK, detected stock package/components, discovery/fallback mode and the stock package dump so users can submit a useful capture. Recognized configuration does not mean every firmware was tested on a phone; different failure causes may need future detection support.
 
 ## Capture an issue from KernelSU / Magisk
 
@@ -36,9 +46,9 @@ Version 0.1.1 fixed Android whitespace-formatted `roles.xml` parsing and added m
 
 Automatic recovery requires all of these conditions:
 
-- NX809J, SDK 36, completed boot, at least 90 seconds uptime, awake screen, current user 0 in `RUNNING_UNLOCKED`, and keyguard explicitly showing false.
+- NX809J, completed boot, at least 90 seconds uptime, awake screen, current user 0 in `RUNNING_UNLOCKED`, and keyguard explicitly showing false.
 - Exactly one saved HOME role holder that is a third-party package. Selecting the stock launcher, Game Space or a setup/provisioning Home does not qualify.
-- Three consecutive stale observations over at least ten seconds: `isDefaultHome=false`, `isHomeDisabled=false`, `homeAndOverviewSame=true`, and stock Quickstep Home targeted for both Home and Overview.
+- Three consecutive stale observations over at least ten seconds: `isDefaultHome=false`, `isHomeDisabled=false`, `homeAndOverviewSame=true`, and the identified stock Home activity targeted for both Home and Overview (or the verified legacy Quickstep target).
 - The saved default remains the same package throughout confirmation and immediately before recovery.
 - The stock Home activity is foreground throughout confirmation and immediately before recovery. Merely opening Recents does not qualify; another app in front defers recovery.
 - The selected package is installed for user 0, visible, enabled, not suspended and not quarantined, checked before confirmation and again immediately before recovery.

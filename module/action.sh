@@ -7,6 +7,8 @@ umask 077
 STATE=/data/adb/redmagic_launcher_guard
 mkdir -p "$STATE"
 echo "Version: $(sed -n 's/^version=//p' "$MODDIR/module.prop")"
+detect_stock_launcher
+compatibility_summary
 echo "=== Monitor ==="
 monitor_pid=$(cat "$STATE/monitor.pid" 2>/dev/null)
 monitor_boot=$(cat "$STATE/monitor.boot" 2>/dev/null)

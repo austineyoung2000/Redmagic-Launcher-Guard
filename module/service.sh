@@ -4,8 +4,7 @@ PATH=/system/bin:/system/xbin
 export PATH
 umask 077
 . "$MODDIR/guard-lib.sh"
-[ "$(getprop ro.product.model)" = NX809J ] || exit 0
-[ "$(getprop ro.build.version.sdk)" = 36 ] || exit 0
+is_redmagic11pro || exit 0
 # In-memory state and lock disappear at reboot. Never kill an unrelated PID.
 STATE=/data/adb/redmagic_launcher_guard
 mkdir -p "$STATE"
@@ -18,12 +17,18 @@ BASE_COMPONENT=
 last_attempt=0
 attempts=0
 LAST_RESULT=none
+detect_stock_launcher
 printf '%s\n' "$$" > "$STATE/monitor.pid"
 cat /proc/sys/kernel/random/boot_id > "$STATE/monitor.boot"
 write_status "monitoring selected Home role"
 log_event "monitor started; confirmed-stale recovery enabled; no healthy baseline required"
 while active_module; do
     sleep 30
+    # Retry incomplete discovery lazily after boot, retaining legacy recovery.
+    if [ "${DETECTION_MODE:-verified-fallback}" != discovered ] && [ "$(getprop sys.boot_completed)" = 1 ] && [ "${discovery_retried:-0}" = 0 ]; then
+        detect_stock_launcher
+        discovery_retried=1
+    fi
     holder=$(read_role)
     if ! third_party_holder "$holder"; then
         BASE_HOLDER=
